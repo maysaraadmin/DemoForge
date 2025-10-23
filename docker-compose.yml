@@ -1,0 +1,154 @@
+services:
+
+  ###########################################################
+  # 1. Ollama – pull & serve Llama-3, Mistral, Jais …
+  ###########################################################
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      retries: 3
+
+  ###########################################################
+  # 2. n8n – visual workflow automation (AI-agent glue)
+  ###########################################################
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=CoolAI123!
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+    depends_on:
+      - postgres_n8n
+
+  postgres_n8n:
+    image: postgres:15-alpine
+    container_name: postgres_n8n
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n123
+    volumes:
+      - postgres_n8n:/var/lib/postgresql/data
+
+  ###########################################################
+  # 3. Twenty CRM – open-source pipeline tracker
+  ###########################################################
+  twenty:
+    image: twentycrm/twenty:latest
+    container_name: twenty
+    restart: unless-stopped
+    ports:
+      - "8080:3000"
+    environment:
+      - PG_DATABASE_HOST=postgres_twenty
+      - PG_DATABASE_PORT=5432
+      - PG_DATABASE_USER=twenty
+      - PG_DATABASE_PASSWORD=twenty123
+      - PG_DATABASE_NAME=twenty
+      - SERVER_URL=http://localhost:8080
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres_twenty
+      - redis
+
+  postgres_twenty:
+    image: postgres:15-alpine
+    container_name: postgres_twenty
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: twenty
+      POSTGRES_USER: twenty
+      POSTGRES_PASSWORD: twenty123
+    volumes:
+      - postgres_twenty:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis:/data
+
+  ###########################################################
+  # 4. Hexabot – multi-channel bot builder (Arabic NLU)
+  ###########################################################
+  hexabot:
+    image: elestio/typebot-builder:latest
+    container_name: hexabot
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/typebot
+      - REDIS_URL=redis://redis:6379
+      - PORT=3001
+      - HOST=0.0.0.0
+    depends_on:
+      - mongo
+      - redis
+
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    restart: unless-stopped
+    volumes:
+      - mongo:/data/db
+
+  ###########################################################
+  # 5. BentoML – model-serving micro-services
+  ###########################################################
+  bentoml:
+    image: iancoffey/bentoml-python3:latest
+    container_name: bentoml
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./bentoml_models:/home/bentoml/bentoml
+    environment:
+      - BENTOML_HOME=/home/bentoml/bentoml
+    command: bentoml serve --production --host 0.0.0.0 --port 5000
+
+  ###########################################################
+  # 6. Portainer – optional UI to manage everything
+  ###########################################################
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer_demoforfe
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer:/data
+
+volumes:
+  ollama:
+  n8n_data:
+  postgres_n8n:
+  postgres_twenty:
+  redis:
+  mongo:
+  portainer:
+  bentoml_models:
