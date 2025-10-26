@@ -12,9 +12,33 @@ services:
       - REDIS_URL=redis://redis:6379
       - PORT=3001
       - HOST=0.0.0.0
+      - DATABASE_URL=postgresql://typebot_user:typebot_password@typebot-postgres:5432/typebot
+      - ENCRYPTION_SECRET=12345678901234567890123456789012
+      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_SECRET=typebot_nextauth_secret_key_2024
+      - NEXT_PUBLIC_VIEWER_URL=http://localhost:3001
+      - GOOGLE_AUTH_CLIENT_ID=${GOOGLE_AUTH_CLIENT_ID}
+      - GOOGLE_AUTH_CLIENT_SECRET=${GOOGLE_AUTH_CLIENT_SECRET}
     depends_on:
       - mongo
       - redis
+      - typebot-postgres
+
+  typebot-postgres:
+    image: postgres:16-alpine
+    container_name: typebot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: typebot_user
+      POSTGRES_PASSWORD: typebot_password
+      POSTGRES_DB: typebot
+    volumes:
+      - typebot-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U typebot_user -d typebot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   mongo:
     image: mongo:6
@@ -36,3 +60,4 @@ services:
 
 volumes:
   mongo:
+  typebot-postgres:

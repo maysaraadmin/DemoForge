@@ -1,0 +1,31 @@
+services:
+  flask-ml-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    container_name: flask_ml_api
+    restart: unless-stopped
+    ports:
+      - "5002:5002"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5002
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: flask_ml_redis
+    restart: unless-stopped
+    ports:
+      - "6378:6379"
+    command: ["redis-server", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

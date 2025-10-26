@@ -1,0 +1,41 @@
+FROM python:3.9-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /opt/bentoml
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt /opt/bentoml/
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy BentoML configuration and service files
+COPY bentoml_config.yml /opt/bentoml/
+COPY demo_bentoml_service.py /opt/bentoml/
+COPY ml_service.py /opt/bentoml/
+
+# Create necessary directories
+RUN mkdir -p /opt/bentoml/models /opt/bentoml/bento /opt/bentoml/data /opt/bentoml/scripts
+
+# Copy scripts if they exist
+COPY scripts/ /opt/bentoml/scripts/
+
+# Set environment variables
+ENV BENTOML_MODEL_STORE=/opt/bentoml/models
+ENV PYTHONPATH=/opt/bentoml
+ENV BENTOML_CONFIG=/opt/bentoml/bentoml_config.yml
+
+# Expose port
+EXPOSE 5000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+# Default command - serve the demo service directly
+CMD ["python", "/opt/bentoml/demo_bentoml_service.py"]

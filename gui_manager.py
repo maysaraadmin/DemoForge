@@ -121,11 +121,11 @@ class DockerComposeManager(QMainWindow):
             'twenty': {
                 'name': 'Twenty CRM',
                 'description': 'Open Source Pipeline Tracker',
-                'port': 8080,
-                'url': 'http://localhost:8080',
+                'port': 3000,
+                'url': 'http://localhost:3000',
                 'color': '#45b7d1'
             },
-            'hexabot': {
+            'typebot': {
                 'name': 'Typebot',
                 'description': 'Chatbot Builder Platform',
                 'port': 3001,
@@ -133,10 +133,10 @@ class DockerComposeManager(QMainWindow):
                 'color': '#f39c12'
             },
             'bentoml': {
-                'name': 'BentoML',
-                'description': 'Model Serving Microservices',
-                'port': 5000,
-                'url': 'http://localhost:5000',
+                'name': 'Flask ML API',
+                'description': 'Machine Learning Prediction Service',
+                'port': 5002,
+                'url': 'http://localhost:5002',
                 'color': '#2ecc71'
             },
             'portainer': {
@@ -228,11 +228,16 @@ class DockerComposeManager(QMainWindow):
         refresh_browser_action.triggered.connect(self.browser_refresh)
         browser_menu.addAction(refresh_browser_action)
 
-        browser_menu.addSeparator()
-        for service_id, service_info in self.services.items():
-            service_action = QAction(f'Open {service_info["name"]}', self)
-            service_action.triggered.connect(lambda checked, url=service_info['url']: self.open_service_url(url))
-            browser_menu.addAction(service_action)
+        # Help menu
+        help_menu = menubar.addMenu('Help')
+        about_action = QAction('About', self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+        help_menu.addSeparator()
+        system_info_action = QAction('System Information', self)
+        system_info_action.triggered.connect(self.show_system_info)
+        help_menu.addAction(system_info_action)
 
     def init_status_bar(self):
         """Initialize the status bar"""
@@ -317,16 +322,19 @@ class DockerComposeManager(QMainWindow):
         # Services table
         self.services_table = QTableWidget()
         self.services_table.setColumnCount(6)
-        self.services_table.setHorizontalHeaderLabels(["Service", "Status", "Port", "Container", "CPU %", "Memory"])
+        self.services_table.setHorizontalHeaderLabels(["Service", "Status", "Port", "Container", "Image", "ID"])
 
         # Set column widths
         self.services_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.services_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         self.services_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
         self.services_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
-        self.services_table.setColumnWidth(1, 100)
+        self.services_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Fixed)
+        self.services_table.setColumnWidth(1, 120)
         self.services_table.setColumnWidth(2, 80)
-        self.services_table.setColumnWidth(3, 120)
+        self.services_table.setColumnWidth(3, 150)
+        self.services_table.setColumnWidth(4, 200)
+        self.services_table.setColumnWidth(5, 100)
 
         # Style the table
         self.services_table.setAlternatingRowColors(True)
@@ -357,6 +365,9 @@ class DockerComposeManager(QMainWindow):
         controls_layout.addWidget(restart_service_btn)
 
         layout.addLayout(controls_layout)
+
+        # Initialize table with current data
+        self.refresh_services_table()
 
         return widget
 
@@ -490,14 +501,23 @@ class DockerComposeManager(QMainWindow):
 
         # Configure web engine settings for better compatibility
         settings = self.browser_view.settings()
-        settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.WebGLEnabled, True)
-        settings.setAttribute(QWebEngineSettings.PluginsEnabled, True)
 
-        # Disable web security for local development (if needed)
-        settings.setAttribute(QWebEngineSettings.WebSecurityEnabled, False)
-        settings.setAttribute(QWebEngineSettings.CorsEnabled, True)
+        # Enable basic settings that should be available in all PyQt5 versions
+        try:
+            settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
+            settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
+            settings.setAttribute(QWebEngineSettings.WebGLEnabled, True)
+            settings.setAttribute(QWebEngineSettings.PluginsEnabled, True)
+        except AttributeError as e:
+            print(f"Warning: Some WebEngine settings not available: {e}")
+
+        # Set local content access if available
+        try:
+            settings.setAttribute(QWebEngineSettings.LocalContentCanAccessFileUrls, True)
+            settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        except AttributeError:
+            # These might not be available in older versions
+            pass
 
         layout.addWidget(self.browser_view)
 
@@ -506,8 +526,8 @@ class DockerComposeManager(QMainWindow):
         self.browser_progress.setVisible(False)
         layout.addWidget(self.browser_progress)
 
-        # Load default page (Portainer as it's the management interface)
-        default_url = self.services['portainer']['url']
+        # Load default page (Twenty CRM as it's the main application)
+        default_url = self.services['twenty']['url']
         self.browser_view.load(QUrl(default_url))
         self.url_input.setText(default_url)
 
@@ -545,8 +565,8 @@ class DockerComposeManager(QMainWindow):
         self.browser_view.reload()
 
     def browser_home(self):
-        """Go to home page (Portainer)"""
-        default_url = self.services['portainer']['url']
+        """Go to home page (Twenty CRM)"""
+        default_url = self.services['twenty']['url']
         self.browser_view.load(QUrl(default_url))
         self.url_input.setText(default_url)
 
@@ -648,66 +668,158 @@ class DockerComposeManager(QMainWindow):
     def refresh_services_table(self):
         """Refresh the services table with current container information"""
         try:
-            # Get container information
+            print("🔄 Refreshing services table...")  # Debug log
+
+            # Get container information with proper format
             result = subprocess.run(['docker', 'ps', '-a', '--format',
-                                   'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}'],
+                                   '{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}\t{{.ID}}'],
                                   capture_output=True, text=True, timeout=15)
+
+            print(f"Docker command exit code: {result.returncode}")  # Debug log
+            print(f"Docker stdout: {result.stdout[:200]}...")  # Debug log first 200 chars
+            print(f"Docker stderr: {result.stderr}")  # Debug log
 
             if result.returncode == 0:
                 self.services_table.setRowCount(0)
                 lines = result.stdout.strip().split('\n')
+                print(f"Found {len(lines)} container lines")  # Debug log
 
-                for line in lines[1:]:  # Skip header
+                # Clear existing rows
+                self.services_table.setRowCount(0)
+
+                containers_found = 0
+
+                for line in lines:
                     if line.strip():
                         parts = line.split('\t')
-                        if len(parts) >= 4:
+                        if len(parts) >= 5:  # We need at least 5 parts now (Name, Status, Ports, Image, ID)
                             container_name = parts[0]
                             status = parts[1]
-                            ports = parts[2] if parts[2] != '<no value>' else 'N/A'
+                            ports = parts[2] if parts[2] and parts[2] != '<no value>' else 'N/A'
                             image = parts[3]
+                            container_id = parts[4]
+
+                            print(f"Processing container: {container_name} - {status}")  # Debug log
 
                             # Map container names to services
                             service_id = None
-                            for sid, sname in [('postgres_n8n', 'postgres_n8n'),
-                                              ('postgres_twenty', 'postgres_twenty'),
-                                              ('portainer', 'portainer_demoforfe')]:
-                                if sid in container_name or sname in container_name:
-                                    service_id = sid
+                            service_display_name = "Unknown"
+
+                            # Check for known service mappings
+                            service_mapping = {
+                                'twenty': 'Twenty CRM',
+                                'typebot': 'Typebot',
+                                'portainer': 'Portainer',
+                                'portainer_demoforge': 'Portainer',
+                                'ollama': 'Ollama',
+                                'n8n': 'N8N',
+                                'flask_ml_api': 'Flask ML API',
+                                'postgres_n8n': 'PostgreSQL (N8N)',
+                                'postgres_twenty': 'PostgreSQL (Twenty)',
+                                'redis': 'Redis',
+                                'mongo': 'MongoDB'
+                            }
+
+                            for container_key, display_name in service_mapping.items():
+                                if container_key in container_name.lower():
+                                    service_id = container_key
+                                    service_display_name = display_name
+                                    print(f"Mapped {container_name} to {service_id}")  # Debug log
                                     break
 
+                            # If no mapping found, try to match with service IDs
                             if not service_id:
                                 for sid in self.services.keys():
-                                    if sid in container_name:
+                                    if sid in container_name.lower():
                                         service_id = sid
+                                        service_display_name = self.services[sid]['name']
+                                        print(f"Mapped {container_name} to {service_id} (service key)")  # Debug log
                                         break
 
-                            if service_id:
+                            # Always show the container if it's running, even if not in our services list
+                            if service_id or 'Up' in status:
+                                containers_found += 1
                                 row = self.services_table.rowCount()
                                 self.services_table.insertRow(row)
 
-                                # Service name
-                                service_info = self.services.get(service_id, {'name': service_id, 'port': 'N/A'})
-                                self.services_table.setItem(row, 0, QTableWidgetItem(service_info['name']))
+                                # Service/Container name
+                                display_name = service_display_name if service_id else container_name
+                                self.services_table.setItem(row, 0, QTableWidgetItem(display_name))
 
-                                # Status
+                                # Status with color coding
                                 status_item = QTableWidgetItem(status)
                                 if 'Up' in status:
                                     status_item.setForeground(QColor('green'))
-                                else:
+                                    status_item.setText("🟢 Running")
+                                elif 'Exited' in status:
                                     status_item.setForeground(QColor('red'))
+                                    status_item.setText("🔴 Stopped")
+                                else:
+                                    status_item.setForeground(QColor('orange'))
+                                    status_item.setText("🟡 " + status[:20])
                                 self.services_table.setItem(row, 1, status_item)
 
-                                # Port
-                                self.services_table.setItem(row, 2, QTableWidgetItem(str(service_info.get('port', 'N/A'))))
+                                # Port information
+                                port_info = str(self.services.get(service_id, {}).get('port', 'N/A')) if service_id else 'N/A'
+                                self.services_table.setItem(row, 2, QTableWidgetItem(port_info))
 
-                                # Container name
-                                self.services_table.setItem(row, 3, QTableWidgetItem(container_name))
+                                # Container name (shortened)
+                                short_name = container_name[:30] + "..." if len(container_name) > 30 else container_name
+                                self.services_table.setItem(row, 3, QTableWidgetItem(short_name))
 
-                                # CPU and Memory (placeholder)
-                                self.services_table.setItem(row, 4, QTableWidgetItem("N/A"))
-                                self.services_table.setItem(row, 5, QTableWidgetItem("N/A"))
+                                # Image (shortened)
+                                short_image = image[:40] + "..." if len(image) > 40 else image
+                                self.services_table.setItem(row, 4, QTableWidgetItem(short_image))
+
+                                # Container ID (shortened)
+                                short_id = container_id[:12] if container_id else 'N/A'
+                                self.services_table.setItem(row, 5, QTableWidgetItem(short_id))
+
+                print(f"Added {containers_found} containers to table")  # Debug log
+
+                # Resize columns to content
+                self.services_table.resizeColumnsToContents()
+
+                # Show message if no containers found
+                if containers_found == 0:
+                    if "error" in result.stderr.lower() or result.returncode != 0:
+                        self.services_table.setRowCount(1)
+                        self.services_table.setItem(0, 0, QTableWidgetItem("⚠️ Docker Error"))
+                        self.services_table.setItem(0, 1, QTableWidgetItem("🔴 Check Connection"))
+                        self.services_table.setItem(0, 2, QTableWidgetItem("N/A"))
+                        self.services_table.setItem(0, 3, QTableWidgetItem("Run 'docker ps' manually"))
+                        self.services_table.setItem(0, 4, QTableWidgetItem("to troubleshoot"))
+                        self.services_table.setItem(0, 5, QTableWidgetItem("N/A"))
+                    else:
+                        self.services_table.setRowCount(1)
+                        self.services_table.setItem(0, 0, QTableWidgetItem("📦 No Containers"))
+                        self.services_table.setItem(0, 1, QTableWidgetItem("🟡 No Active Services"))
+                        self.services_table.setItem(0, 2, QTableWidgetItem("N/A"))
+                        self.services_table.setItem(0, 3, QTableWidgetItem("Start some services"))
+                        self.services_table.setItem(0, 4, QTableWidgetItem("to see them here"))
+                        self.services_table.setItem(0, 5, QTableWidgetItem("N/A"))
+
+            else:
+                # Show Docker error in table
+                self.services_table.setRowCount(1)
+                self.services_table.setItem(0, 0, QTableWidgetItem("❌ Docker Error"))
+                self.services_table.setItem(0, 1, QTableWidgetItem("🔴 Connection Failed"))
+                self.services_table.setItem(0, 2, QTableWidgetItem("N/A"))
+                self.services_table.setItem(0, 3, QTableWidgetItem(result.stderr[:50]))
+                self.services_table.setItem(0, 4, QTableWidgetItem("Check Docker Desktop"))
+                self.services_table.setItem(0, 5, QTableWidgetItem("N/A"))
+                QMessageBox.warning(self, "Error", f"Failed to get container information:\n{result.stderr}")
 
         except Exception as e:
+            print(f"Exception in refresh_services_table: {e}")  # Debug log
+            # Show error in table
+            self.services_table.setRowCount(1)
+            self.services_table.setItem(0, 0, QTableWidgetItem("❌ Error"))
+            self.services_table.setItem(0, 1, QTableWidgetItem("🔴 Exception"))
+            self.services_table.setItem(0, 2, QTableWidgetItem("N/A"))
+            self.services_table.setItem(0, 3, QTableWidgetItem(str(e)[:30]))
+            self.services_table.setItem(0, 4, QTableWidgetItem("Check console"))
+            self.services_table.setItem(0, 5, QTableWidgetItem("N/A"))
             QMessageBox.warning(self, "Error", f"Failed to refresh services: {str(e)}")
 
     def load_service_logs(self):
@@ -721,7 +833,16 @@ class DockerComposeManager(QMainWindow):
         container_name = None
         for service_id, service_info in self.services.items():
             if service_info['name'] == service_name:
-                container_name = service_id
+                # Map service names to container names
+                container_mapping = {
+                    'Ollama': 'ollama',
+                    'N8N': 'n8n',
+                    'Twenty CRM': 'twenty',
+                    'Typebot': 'typebot',
+                    'Flask ML API': 'flask_ml_api',
+                    'Portainer': 'portainer'
+                }
+                container_name = container_mapping.get(service_name, service_id)
                 break
 
         if not container_name:
@@ -750,30 +871,45 @@ class DockerComposeManager(QMainWindow):
     def start_all_services(self):
         """Start all services"""
         try:
-            subprocess.run(['docker-compose', 'up', '-d'],
-                         cwd=os.path.dirname(__file__), check=True)
-            QMessageBox.information(self, "Success", "All services started successfully!")
-            self.refresh_all_data()
+            result = subprocess.run(['docker-compose', 'up', '-d'],
+                                 cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", "All services started successfully!")
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to start services:\n{result.stderr}")
+
         except subprocess.CalledProcessError as e:
             QMessageBox.warning(self, "Error", f"Failed to start services: {e}")
 
     def stop_all_services(self):
         """Stop all services"""
         try:
-            subprocess.run(['docker-compose', 'down'],
-                         cwd=os.path.dirname(__file__), check=True)
-            QMessageBox.information(self, "Success", "All services stopped successfully!")
-            self.refresh_all_data()
+            result = subprocess.run(['docker-compose', 'down'],
+                                 cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", "All services stopped successfully!")
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to stop services:\n{result.stderr}")
+
         except subprocess.CalledProcessError as e:
             QMessageBox.warning(self, "Error", f"Failed to stop services: {e}")
 
     def restart_all_services(self):
         """Restart all services"""
         try:
-            subprocess.run(['docker-compose', 'restart'],
-                         cwd=os.path.dirname(__file__), check=True)
-            QMessageBox.information(self, "Success", "All services restarted successfully!")
-            self.refresh_all_data()
+            result = subprocess.run(['docker-compose', 'restart'],
+                                 cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", "All services restarted successfully!")
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to restart services:\n{result.stderr}")
+
         except subprocess.CalledProcessError as e:
             QMessageBox.warning(self, "Error", f"Failed to restart services: {e}")
 
@@ -799,11 +935,28 @@ class DockerComposeManager(QMainWindow):
         service_name = self.services_table.item(current_row, 0).text()
         container_name = self.services_table.item(current_row, 3).text()
 
+        # Map display names to actual docker-compose service names
+        service_name_mapping = {
+            'Ollama': 'ollama',
+            'N8N': 'n8n',
+            'Twenty CRM': 'twenty',
+            'Typebot': 'typebot',
+            'Flask ML API': 'flask-ml-api',
+            'Portainer': 'portainer'
+        }
+
+        actual_service_name = service_name_mapping.get(service_name, service_name.lower())
+
         try:
-            cmd = ['docker-compose', action] + list(args) + [container_name]
-            subprocess.run(cmd, cwd=os.path.dirname(__file__), check=True)
-            QMessageBox.information(self, "Success", f"Service {service_name} {action}ed successfully!")
-            self.refresh_all_data()
+            cmd = ['docker-compose', action] + list(args) + [actual_service_name]
+            result = subprocess.run(cmd, cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", f"Service {service_name} {action}ed successfully!")
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to {action} service {service_name}:\n{result.stderr}")
+
         except subprocess.CalledProcessError as e:
             QMessageBox.warning(self, "Error", f"Failed to {action} service {service_name}: {e}")
 
@@ -853,19 +1006,72 @@ class DockerComposeManager(QMainWindow):
         self.refresh_timer.stop()
         self.refresh_timer.start(interval * 1000)
 
-    def show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(self, "About DemoForge Manager",
-                         "DemoForge - AI/ML Stack Manager\n\n"
-                         "A PyQt5 GUI for managing Docker Compose AI/ML services.\n\n"
-                         "Services managed:\n"
-                         "• Ollama - AI Model Server\n"
-                         "• N8N - Workflow Automation\n"
-                         "• Twenty CRM - Pipeline Tracker\n"
-                         "• Typebot - Chatbot Builder\n"
-                         "• BentoML - Model Serving\n"
-                         "• Portainer - Docker Management\n\n"
-                         "Built with PyQt5 and Docker Compose")
+    def show_system_info(self):
+        """Show system information dialog"""
+        try:
+            # Get Docker version
+            docker_result = subprocess.run(['docker', '--version'],
+                                         capture_output=True, text=True, timeout=5)
+
+            # Get Docker Compose version
+            compose_result = subprocess.run(['docker-compose', '--version'],
+                                          capture_output=True, text=True, timeout=5)
+
+            # Get system info
+            info = "=== System Information ===\n\n"
+            info += f"Python Version: {sys.version}\n"
+            info += f"PyQt5 Version: {self.get_pyqt_version()}\n"
+            info += f"Docker Version: {docker_result.stdout.strip() if docker_result.returncode == 0 else 'Not available'}\n"
+            info += f"Compose Version: {compose_result.stdout.strip() if compose_result.returncode == 0 else 'Not available'}\n\n"
+
+            # Get Docker Compose files
+            info += "=== Available Services ===\n"
+            compose_files = [f for f in os.listdir(os.path.dirname(__file__))
+                           if f.startswith('docker-compose') and f.endswith('.yml')]
+
+            if compose_files:
+                info += f"Found {len(compose_files)} docker-compose files:\n"
+                for file in sorted(compose_files):
+                    info += f"  • {file}\n"
+
+                    # Try to parse services from each compose file
+                    try:
+                        compose_path = os.path.join(os.path.dirname(__file__), file)
+                        with open(compose_path, 'r') as f:
+                            content = f.read()
+                            # Simple parsing to find services
+                            lines = content.split('\n')
+                            services = []
+                            in_services = False
+                            for line in lines:
+                                line = line.strip()
+                                if line == 'services:':
+                                    in_services = True
+                                elif in_services and line.endswith(':') and not line.startswith('  '):
+                                    services.append(line[:-1])
+                                elif in_services and line == '' and services:
+                                    break
+
+                            if services:
+                                info += f"    Services: {', '.join(services)}\n"
+                    except:
+                        pass
+                    info += "\n"
+            else:
+                info += "No docker-compose files found.\n"
+
+            QMessageBox.about(self, "System Information", info)
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to get system information: {e}")
+
+    def get_pyqt_version(self):
+        """Get PyQt5 version"""
+        try:
+            from PyQt5.QtCore import PYQT_VERSION_STR
+            return PYQT_VERSION_STR
+        except:
+            return "Unknown"
 
     def closeEvent(self, event):
         """Handle application close event"""
@@ -883,6 +1089,20 @@ class DockerComposeManager(QMainWindow):
         else:
             event.ignore()
 
+    def show_about(self):
+        """Show about dialog"""
+        QMessageBox.about(self, "About DemoForge Manager",
+                         "DemoForge - AI/ML Stack Manager\n\n"
+                         "A PyQt5 GUI for managing Docker Compose AI/ML services.\n\n"
+                         "Services managed:\n"
+                         "• Ollama - AI Model Server\n"
+                         "• N8N - Workflow Automation\n"
+                         "• Twenty CRM - Pipeline Tracker\n"
+                         "• Typebot - Chatbot Builder\n"
+                         "• BentoML - Model Serving\n"
+                         "• Portainer - Docker Management\n\n"
+                         "Built with PyQt5 and Docker Compose")
+
 
 class ContainerMonitor(QThread):
     """Thread for monitoring container status"""
@@ -896,9 +1116,9 @@ class ContainerMonitor(QThread):
         """Monitor container status in a loop"""
         while self.running:
             try:
-                # Get container status
-                result = subprocess.run(['docker', 'ps', '--format',
-                                       '{{.Names}}\t{{.Status}}'],
+                # Get container status with more detailed format
+                result = subprocess.run(['docker', 'ps', '-a', '--format',
+                                       '{{.Names}}\t{{.Status}}\t{{.Ports}}'],
                                       capture_output=True, text=True, timeout=10)
 
                 if result.returncode == 0:
@@ -910,15 +1130,42 @@ class ContainerMonitor(QThread):
                             parts = line.split('\t')
                             if len(parts) >= 2:
                                 container_name = parts[0]
-                                status = 'running' if 'Up' in parts[1] else 'stopped'
+                                status = parts[1]
+                                ports = parts[2] if len(parts) > 2 else ''
 
-                                # Map container names to service IDs
-                                for service_id in ['ollama', 'n8n', 'twenty', 'hexabot',
-                                                 'bentoml', 'portainer', 'portainer_demoforfe',
-                                                 'postgres_n8n', 'postgres_twenty', 'redis', 'mongo']:
-                                    if service_id in container_name:
-                                        status_data[service_id] = status
+                                # Determine service status
+                                service_status = 'stopped'
+                                if 'Up' in status:
+                                    service_status = 'running'
+                                elif 'Exited' in status:
+                                    service_status = 'stopped'
+
+                                # Map container names to service IDs with improved logic
+                                service_mapping = {
+                                    'twenty': 'twenty',
+                                    'typebot': 'typebot',
+                                    'portainer': 'portainer',
+                                    'portainer_demoforge': 'portainer',
+                                    'ollama': 'ollama',
+                                    'n8n': 'n8n',
+                                    'flask_ml_api': 'bentoml',
+                                    'postgres_n8n': 'postgres_n8n',
+                                    'postgres_twenty': 'postgres_twenty',
+                                    'redis': 'redis',
+                                    'mongo': 'mongo'
+                                }
+
+                                # Check for matches
+                                for container_key, service_id in service_mapping.items():
+                                    if container_key in container_name.lower():
+                                        status_data[service_id] = service_status
                                         break
+                                else:
+                                    # If no mapping found, try to match with service IDs directly
+                                    for service_id in ['ollama', 'n8n', 'twenty', 'typebot', 'bentoml', 'portainer']:
+                                        if service_id in container_name.lower():
+                                            status_data[service_id] = service_status
+                                            break
 
                     self.status_updated.emit(status_data)
 

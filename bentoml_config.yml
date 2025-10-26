@@ -1,0 +1,28 @@
+# BentoML Configuration
+api_server:
+  host: 0.0.0.0
+  port: 5000
+  workers: 1
+  max_request_size: 20971520  # 20MB
+  enable_metrics: true
+  enable_cors: true
+
+# Model store configuration
+model_store:
+  root: /opt/bentoml/models
+
+# Logging configuration
+logging:
+  level: INFO
+  format: "[%(asctime)s] %(levelname)s - %(name)s - %(message)s"
+
+# Redis configuration (for session storage and caching)
+redis:
+  url: redis://redis:6379
+  max_connections: 20
+  db: 0
+
+# Development settings
+development:
+  reload: true
+  debug: true

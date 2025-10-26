@@ -1,0 +1,71 @@
+services:
+  bentoml-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.bentoml
+    container_name: bentoml_api
+    restart: unless-stopped
+    ports:
+      - "${BENTOML_PORT:-5000}:5000"
+    volumes:
+      - ./models:/opt/bentoml/models
+      - ./bento:/opt/bentoml/bento
+      - ./bentoml_config.yml:/opt/bentoml/bentoml_config.yml
+      - bentoml-data:/opt/bentoml/data
+    environment:
+      - BENTOML_HOST=${BENTOML_HOST}
+      - BENTOML_PORT=${BENTOML_PORT}
+      - BENTOML_API_WORKERS=${BENTOML_API_WORKERS}
+      - BENTOML_CONFIG=${BENTOML_CONFIG}
+      - REDIS_URL=${REDIS_URL}
+      - BENTOML_MODEL_STORE=${BENTOML_MODEL_STORE}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["python", "/opt/bentoml/demo_bentoml_service.py"]
+
+  bentoml-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.bentoml
+    container_name: bentoml_dashboard
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./models:/opt/bentoml/models
+      - ./bento:/opt/bentoml/bento
+      - ./bentoml_config.yml:/opt/bentoml/bentoml_config.yml
+    environment:
+      - BENTOML_HOST=0.0.0.0
+      - BENTOML_PORT=5001
+      - BENTOML_CONFIG=${BENTOML_CONFIG}
+      - BENTOML_MODEL_STORE=${BENTOML_MODEL_STORE}
+    depends_on:
+      - bentoml-api
+    command: ["bentoml", "serve", "demo_bentoml_service:latest", "--host", "0.0.0.0", "--port", "5001", "--dashboard"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: bentoml_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--maxmemory-policy", "allkeys-lru", "--maxmemory", "256mb"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  bentoml-data:
+  redis-data:
