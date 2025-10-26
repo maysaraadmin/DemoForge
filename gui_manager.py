@@ -183,6 +183,10 @@ class DockerComposeManager(QMainWindow):
         self.services_tab = self.create_services_tab()
         self.tab_widget.addTab(self.services_tab, "🔧 Services")
 
+        # Compose Projects tab
+        self.compose_tab = self.create_compose_tab()
+        self.tab_widget.addTab(self.compose_tab, "📋 Compose Projects")
+
         # Browser tab
         self.browser_tab = self.create_browser_tab()
         self.tab_widget.addTab(self.browser_tab, "🌐 Browser")
@@ -221,6 +225,12 @@ class DockerComposeManager(QMainWindow):
         external_browser_action = QAction('Open in External Browser', self)
         external_browser_action.triggered.connect(self.open_in_external_browser)
         tools_menu.addAction(external_browser_action)
+
+        # Compose menu
+        compose_menu = menubar.addMenu('Compose')
+        refresh_compose_action = QAction('Refresh Projects', self)
+        refresh_compose_action.triggered.connect(self.refresh_compose_projects)
+        compose_menu.addAction(refresh_compose_action)
 
         # Browser menu
         browser_menu = menubar.addMenu('Browser')
@@ -370,6 +380,246 @@ class DockerComposeManager(QMainWindow):
         self.refresh_services_table()
 
         return widget
+
+    def create_compose_tab(self):
+        """Create the compose projects management tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Title
+        title = QLabel("🛠️ Docker Compose Projects")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Compose projects table
+        self.compose_table = QTableWidget()
+        self.compose_table.setColumnCount(4)
+        self.compose_table.setHorizontalHeaderLabels(["Project", "Status", "Services", "Actions"])
+
+        # Set column widths
+        self.compose_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.compose_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.compose_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.compose_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.compose_table.setColumnWidth(1, 100)
+        self.compose_table.setColumnWidth(3, 200)
+
+        # Style the table
+        self.compose_table.setAlternatingRowColors(True)
+        self.compose_table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        layout.addWidget(self.compose_table)
+
+        # Controls layout
+        controls_layout = QHBoxLayout()
+
+        refresh_btn = QPushButton("🔄 Refresh Projects")
+        refresh_btn.clicked.connect(self.refresh_compose_projects)
+        controls_layout.addWidget(refresh_btn)
+
+        controls_layout.addStretch()
+
+        # Project action buttons
+        start_project_btn = QPushButton("▶️ Start Project")
+        start_project_btn.clicked.connect(self.start_selected_compose_project)
+        controls_layout.addWidget(start_project_btn)
+
+        stop_project_btn = QPushButton("⏹️ Stop Project")
+        stop_project_btn.clicked.connect(self.stop_selected_compose_project)
+        controls_layout.addWidget(stop_project_btn)
+
+        restart_project_btn = QPushButton("🔄 Restart Project")
+        restart_project_btn.clicked.connect(self.restart_selected_compose_project)
+        controls_layout.addWidget(restart_project_btn)
+
+        layout.addLayout(controls_layout)
+
+        # Initialize table with current data
+        self.refresh_compose_projects()
+
+        return widget
+
+    def get_compose_files(self):
+        """Get all docker-compose files in the current directory"""
+        try:
+            files = [f for f in os.listdir(os.path.dirname(__file__))
+                    if f.startswith('docker-compose') and f.endswith('.yml')]
+            return sorted(files)
+        except Exception as e:
+            print(f"Error getting compose files: {e}")
+            return []
+
+    def get_compose_services(self, compose_file):
+        """Get services from a docker-compose file"""
+        try:
+            compose_path = os.path.join(os.path.dirname(__file__), compose_file)
+            with open(compose_path, 'r') as f:
+                content = f.read()
+
+            # Simple parsing to find services
+            lines = content.split('\n')
+            services = []
+            in_services = False
+            for line in lines:
+                line = line.strip()
+                if line == 'services:':
+                    in_services = True
+                elif in_services and line.endswith(':') and not line.startswith('  '):
+                    services.append(line[:-1])
+                elif in_services and line == '' and services:
+                    break
+
+            return services
+        except Exception as e:
+            print(f"Error parsing {compose_file}: {e}")
+            return []
+
+    def get_compose_status(self, compose_file):
+        """Get the status of a docker-compose project"""
+        try:
+            project_name = compose_file.replace('docker-compose.', '').replace('.yml', '')
+            result = subprocess.run(['docker-compose', '-f', compose_file, 'ps', '--format', '{{.Status}}'],
+                                  cwd=os.path.dirname(__file__), capture_output=True, text=True, timeout=10)
+
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                running_count = sum(1 for line in lines if 'Up' in line)
+                total_count = len([line for line in lines if line.strip()])
+
+                if total_count == 0:
+                    return "Not Started"
+                elif running_count == total_count:
+                    return f"Running ({running_count}/{total_count})"
+                elif running_count > 0:
+                    return f"Partial ({running_count}/{total_count})"
+                else:
+                    return f"Stopped ({total_count})"
+            else:
+                return "Error"
+        except Exception as e:
+            return "Error"
+
+    def refresh_compose_projects(self):
+        """Refresh the compose projects table"""
+        try:
+            compose_files = self.get_compose_files()
+
+            self.compose_table.setRowCount(0)
+
+            if not compose_files:
+                self.compose_table.setRowCount(1)
+                self.compose_table.setItem(0, 0, QTableWidgetItem("No docker-compose files found"))
+                self.compose_table.setItem(0, 1, QTableWidgetItem("N/A"))
+                self.compose_table.setItem(0, 2, QTableWidgetItem("Check directory"))
+                self.compose_table.setItem(0, 3, QTableWidgetItem("N/A"))
+                return
+
+            for compose_file in compose_files:
+                row = self.compose_table.rowCount()
+                self.compose_table.insertRow(row)
+
+                # Project name
+                project_name = compose_file.replace('docker-compose.', '').replace('.yml', '').title()
+                self.compose_table.setItem(row, 0, QTableWidgetItem(project_name))
+
+                # Status
+                status = self.get_compose_status(compose_file)
+                status_item = QTableWidgetItem(status)
+                if "Running" in status:
+                    status_item.setForeground(QColor('green'))
+                elif "Partial" in status:
+                    status_item.setForeground(QColor('orange'))
+                elif "Stopped" in status:
+                    status_item.setForeground(QColor('red'))
+                else:
+                    status_item.setForeground(QColor('gray'))
+                self.compose_table.setItem(row, 1, status_item)
+
+                # Services
+                services = self.get_compose_services(compose_file)
+                services_text = ", ".join(services) if services else "None found"
+                self.compose_table.setItem(row, 2, QTableWidgetItem(services_text))
+
+                # Actions (file name for reference)
+                self.compose_table.setItem(row, 3, QTableWidgetItem(compose_file))
+
+            self.compose_table.resizeColumnsToContents()
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to refresh compose projects: {str(e)}")
+
+    def start_selected_compose_project(self):
+        """Start the selected compose project"""
+        current_row = self.compose_table.currentRow()
+        if current_row == -1:
+            QMessageBox.warning(self, "Warning", "Please select a compose project first.")
+            return
+
+        compose_file = self.compose_table.item(current_row, 3).text()
+        project_name = self.compose_table.item(current_row, 0).text()
+
+        try:
+            result = subprocess.run(['docker-compose', '-f', compose_file, 'up', '-d'],
+                                  cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", f"Project '{project_name}' started successfully!")
+                self.refresh_compose_projects()
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to start project '{project_name}':\n{result.stderr}")
+
+        except subprocess.CalledProcessError as e:
+            QMessageBox.warning(self, "Error", f"Failed to start project '{project_name}': {e}")
+
+    def stop_selected_compose_project(self):
+        """Stop the selected compose project"""
+        current_row = self.compose_table.currentRow()
+        if current_row == -1:
+            QMessageBox.warning(self, "Warning", "Please select a compose project first.")
+            return
+
+        compose_file = self.compose_table.item(current_row, 3).text()
+        project_name = self.compose_table.item(current_row, 0).text()
+
+        try:
+            result = subprocess.run(['docker-compose', '-f', compose_file, 'down'],
+                                  cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", f"Project '{project_name}' stopped successfully!")
+                self.refresh_compose_projects()
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to stop project '{project_name}':\n{result.stderr}")
+
+        except subprocess.CalledProcessError as e:
+            QMessageBox.warning(self, "Error", f"Failed to stop project '{project_name}': {e}")
+
+    def restart_selected_compose_project(self):
+        """Restart the selected compose project"""
+        current_row = self.compose_table.currentRow()
+        if current_row == -1:
+            QMessageBox.warning(self, "Warning", "Please select a compose project first.")
+            return
+
+        compose_file = self.compose_table.item(current_row, 3).text()
+        project_name = self.compose_table.item(current_row, 0).text()
+
+        try:
+            result = subprocess.run(['docker-compose', '-f', compose_file, 'restart'],
+                                  cwd=os.path.dirname(__file__), capture_output=True, text=True)
+
+            if result.returncode == 0:
+                QMessageBox.information(self, "Success", f"Project '{project_name}' restarted successfully!")
+                self.refresh_compose_projects()
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to restart project '{project_name}':\n{result.stderr}")
+
+        except subprocess.CalledProcessError as e:
+            QMessageBox.warning(self, "Error", f"Failed to restart project '{project_name}': {e}")
 
     def create_logs_tab(self):
         """Create the logs viewing tab"""
@@ -633,6 +883,7 @@ class DockerComposeManager(QMainWindow):
     def refresh_all_data(self):
         """Refresh all data in the application"""
         self.refresh_services_table()
+        self.refresh_compose_projects()
         self.update_connection_status()
 
     def update_connection_status(self):
