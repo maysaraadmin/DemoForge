@@ -1,0 +1,38 @@
+
+
+services:
+  typebot:
+    image: elestio/typebot-builder:latest
+    container_name: typebot
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/typebot
+      - REDIS_URL=redis://redis:6379
+      - PORT=3001
+      - HOST=0.0.0.0
+    depends_on:
+      - mongo
+      - redis
+
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    restart: unless-stopped
+    volumes:
+      - mongo:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: typebot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongo:
